@@ -1,4 +1,3 @@
-import flask
 from flask import Flask, render_template, Response, redirect, url_for, request, flash, jsonify
 import cv2
 import torch
