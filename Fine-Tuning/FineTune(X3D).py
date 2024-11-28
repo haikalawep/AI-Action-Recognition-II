@@ -12,7 +12,7 @@ from pytorchvideo.transforms import (
     ShortSideScale,
     UniformTemporalSubsample
 )
-from torchvision.transforms import Compose, Lambda, CenterCrop
+from torchvision.transforms import Compose, CenterCrop
 from torchvision.transforms._transforms_video import (
     RandomCrop,
     RandomHorizontalFlipVideo
