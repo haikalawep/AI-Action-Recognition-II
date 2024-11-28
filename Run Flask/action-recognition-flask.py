@@ -1,3 +1,4 @@
+import flask
 from flask import Flask, render_template, Response, redirect, url_for, request, flash, jsonify
 import cv2
 import torch
@@ -88,11 +89,12 @@ class MultiPersonVideoClassifier:
         # convert_end_time = datetime.utcfromtimestamp(current_time).strftime('%H:%M:%S')
         round_duration = f"{duration:.2f}"
         
-        DB_PATH = os.environ.get('SQLITE_DB_PATH', '/app/database/flaskDB.db')
-        
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        #DB_PATH = os.environ.get('SQLITE_DB_PATH', '/app/database/flaskDB.db')
 
-        conn = sqlite3.connect(DB_PATH)
+        #os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+        #conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect('action.db')
         c = conn.cursor()
 
         c.execute('''CREATE TABLE IF NOT EXISTS Person(
