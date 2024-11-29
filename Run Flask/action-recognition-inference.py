@@ -43,7 +43,7 @@ class MultiPersonVideoClassifier:
         # Video handling
         self.vid = cv2.VideoCapture(video_path)
         
-        # Store frames for each person using deque for efficient frame management
+        # Store frames for each person using deque for efficient frame managements
         self.person_frames = {}  # Track ID -> deque of frames
         self.person_predictions = {}  # Track ID -> (action, confidence)
         
