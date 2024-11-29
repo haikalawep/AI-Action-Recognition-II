@@ -3,7 +3,7 @@
 
 ## Fine-tuning
 
-Label the action for all your video folders. Examples:
+Label the action for all your video folders. Example:
 - Walking
 - Standing
 - Sitting 
