@@ -7,9 +7,7 @@ import torch.nn as nn
 import numpy as np
 from ultralytics import YOLO
 from torchvision.transforms import Compose, Lambda
-from torchvision.transforms._transforms_video import (
-    NormalizeVideo,
-)
+from torchvision.transforms._transforms_video import NormalizeVideo
 from torch.nn.functional import softmax
 import threading
 import time
@@ -52,7 +50,7 @@ class MultiPersonVideoClassifier:
         self.current_actions = {}    # Track ID -> current_action
         
         # Class names
-        self.class_names = ["Walking", "Standing", "Sitting", "Drinking", "Eating"]
+        self.class_names = ["Walking", "Standing", "Sitting", "Drinking", "Using Phone", "Using Laptop", "Talking", "Fall Down"]
         
         # Lock for thread-safe operations
         self.prediction_lock = threading.Lock()
@@ -143,11 +141,10 @@ class MultiPersonVideoClassifier:
         in_features = model.blocks[5].proj.in_features
         model.blocks[5].proj = nn.Sequential(
             nn.Dropout(p=0.5),
-            nn.Linear(in_features, 5)
+            nn.Linear(in_features, 8)
         )
         map_location = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.load_state_dict(torch.load("best_x3d_model(newupdate).pth", map_location=map_location))
-        # model.load_state_dict(torch.load("C:/Users/nyok/Downloads/VideoTest/best_x3d_model(newupdate).pth"))
+        model.load_state_dict(torch.load("best_x3d_model(NewDatasetMMAct9).pth", map_location=map_location))
         model = model.to(self.device)
         model.eval()
         return model
@@ -179,7 +176,7 @@ class MultiPersonVideoClassifier:
         x1, y1, x2, y2 = map(int, box)
         # Add padding while keeping within frame boundaries
         h, w = frame.shape[:2]
-        pad = 100
+        pad = 40
         x1 = max(0, x1 - pad)
         y1 = max(0, y1 - pad)
         x2 = min(w, x2 + pad)

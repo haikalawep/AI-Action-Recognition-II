@@ -61,6 +61,8 @@ class MultiPersonVideoClassifier:
         )
         map_location = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model.load_state_dict(torch.load("best_x3d_model(newupdate).pth", map_location=map_location))
+        # model.load_state_dict(torch.load("C:/Users/nyok/Desktop/Haikal AI Project/Run Flask/best_x3d_model(newupdate).pth", map_location=map_location))
+
         model = model.to(self.device)
         model.eval()
         return model

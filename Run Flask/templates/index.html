@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="viewport" content="with=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700&display=swap">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css">
+    <title>AI Video Analytics</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        nav {
+            display: flex;
+            padding: 2% 6%;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        nav img {
+            width: 150px;
+        }
+
+        .nav-links {
+            flex: 1;
+            text-align: right;
+        }
+
+        .nav-links ul li {
+            list-style: none;
+            display: inline-block;
+            padding: 8px 12px;
+            position: relative;
+        }
+
+        .nav-links ul li a {
+            color: #473502;
+            text-decoration: none;
+            font-size: 17px;
+            font-weight: bold;
+        }
+
+        .nav-links ul li::after {
+            content: '';
+            width: 0%;
+            height: 2px;
+            background: #0045AA;
+            display: block;
+            margin: auto;
+            transition: 0.5s;
+        }
+
+        .nav-links ul li:hover::after {
+            width: 100%;
+        }
+
+        h1 {
+            font-size: 36px;
+            font-weight: 600;
+            color: #473502;
+        }
+
+        p {
+            color: white;
+            font-size: 18px;
+            font-weight: 300;
+            line-height: 22px;
+            padding: 10px;
+        }
+
+        h3 {
+            text-align: center;
+            font-weight: 600;
+            margin: 10px 0;
+        }
+
+        .sub-header {
+            height: 20vh;
+            width: 100%;
+            background-image: linear-gradient(rgba(255,251,171,0.7), rgba(134,190,11,0.7));
+            background-position: center;
+            background-size: cover;
+            text-align: center;
+            color: #fff;
+        }
+
+        .about-us {
+          width: 80%;
+          margin: auto;
+          padding-bottom: 50px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            text-align: center;
+        }
+
+        .blue-buttons {
+            display: block;
+        }
+
+        .btn {
+            display: inline-block;
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            background-color: #FFD483;
+            color: black;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            background-color: #F9EF16;
+        }
+
+        #exerciseContent {
+            display: flex;
+            justify-content: center; /* Center horizontally */
+            align-items: center;    /* Center vertically */
+        }
+
+        #video {
+            display: block;
+            margin: 30px auto;
+            border: 2px solid #333;
+            border-radius: 5px;
+            background-color: #333;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        }
+
+         .footer {
+            width: 100%;
+            text-align: center;
+            padding: 30px 0;
+            background: #F9DDA6;
+        }
+
+        .footer h4 {
+            margin-bottom: 20px;
+            margin-top: 5px;
+            font-weight: 600;
+        }
+
+        .footer p {
+            color: #777;
+            font-size: 14px;
+        }
+
+        #video, .output {
+            display: none;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+    </style>
+</head>
+<body>
+    <section class="sub-header">
+        <h1>AI Video Analytics Application</h1>
+        <p>Test the model with real-time feedback experience instantly!</p>
+    </section>
+
+    <section class="about-us">
+        <div class="container">
+
+            <div class="blue-buttons">
+                <button class="btn tech1" onclick="startTech(1)">Start Action</button>
+            </div>
+
+            <div id="additionalButtons" style="display: none;">
+                <button class="btn" onclick="startRealTime()">Real-time</button>
+                <button class="btn" onclick="Upload()">Upload Video</button>
+                <form action="" id="uploadForm" enctype="multipart/form-data" method="post">
+                    <label id="labelUpload" class="hidden" for="videoUpload">Upload Your Video:</label>
+                    <input id="inputUpload" class="hidden" type="file" id="videoUpload" name="video" accept="video/*" required>
+                    <br><br>
+                    <button id="btnUpload" onclick="startHandleUpload()" class="btn hidden" type="button">Submit</button>
+                </form>
+            </div>
+
+            <div id="exerciseContent">
+                <!-- <img id="video" src="" width="70%" alt="Video Stream"> -->
+                 <img id="video" src="" width="1080" height="720" alt="Video Stream">
+                <div class="output" id="info">
+                    
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="footer">
+        <h4>Disclaimer</h4>
+        <p>Made by Haikal Arif with the supervision of Mr Frank</p>
+    </section>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+
+        function startTech(exerciseNumber) {
+            document.getElementById('labelUpload').classList.add('hidden');
+            document.getElementById('inputUpload').classList.add('hidden');
+            document.getElementById('btnUpload').classList.add('hidden');
+            document.getElementById('video').style.display = 'none';
+            document.querySelector('.output').style.display = 'none';
+
+            // Update video source to nothing
+            document.getElementById('video').src = `` ;
+
+            // Store the exerciseNumber in a global variable to use it later
+            window.selectedExerciseNumber = exerciseNumber;
+
+            // Show additional buttons for real-time and upload options
+            document.getElementById('additionalButtons').style.display = 'block';
+        }
+
+        function startRealTime() {
+            document.getElementById('labelUpload').classList.add('hidden');
+            document.getElementById('inputUpload').classList.add('hidden');
+            document.getElementById('btnUpload').classList.add('hidden');
+            // Get the exerciseNumber from the global variable
+            const exerciseNumber = window.selectedExerciseNumber;
+
+            // Update video source based on the stored exerciseNumber
+            document.getElementById('video').src = `/video${exerciseNumber}` ;
+
+            // Show video feed and output table
+            document.getElementById('video').style.display = 'block';
+            document.querySelector('.output').style.display = 'block';
+
+            // Add code to start real-time video feed (using webcam)
+            alert('Starting real-time feed');
+        }
+
+        function Upload() {
+            document.getElementById('video').src = ``;
+            document.getElementById('video').style.display = 'none';
+            document.querySelector('.output').style.display = 'none';
+            document.getElementById('labelUpload').classList.remove('hidden');
+            document.getElementById('inputUpload').classList.remove('hidden');
+            document.getElementById('btnUpload').classList.remove('hidden');
+            const form = document.getElementById('uploadForm');
+            form.action = ``;
+        }
+
+        function startHandleUpload() {
+            document.getElementById('labelUpload').classList.add('hidden');
+            document.getElementById('inputUpload').classList.add('hidden');
+            document.getElementById('btnUpload').classList.add('hidden');
+            const exerciseNumber = window.selectedExerciseNumber;
+            const form = document.getElementById('uploadForm');
+            const formData = new FormData(form);
+
+            // Prevent default form submission behavior
+            form.addEventListener('submit', function(event) {
+                event.preventDefault();
+            });
+
+            // Update form action based on selected exercise number
+            form.action = `/videoResult`;
+
+            // Send AJAX request
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState === 4 && this.status === 200) {
+                    var response = JSON.parse(this.responseText);
+                    var videoPath = response.video_path;
+
+                    // Update the src attribute of the video element
+                    var filename = videoPath.split('\\').pop();  // Extracting only the filename from the path
+                    document.getElementById('video').src = `/displayVideo${exerciseNumber}/temporary.mp4`;
+                }
+            };
+            xhr.open("POST", form.action, true);
+            xhr.send(formData);
+
+            // Hide/show relevant elements
+            document.getElementById('video').style.display = 'block';
+            document.querySelector('.output').style.display = 'block';
+            alert('Uploading video');
+        }
+    </script>
+
+</body>
+</html>
