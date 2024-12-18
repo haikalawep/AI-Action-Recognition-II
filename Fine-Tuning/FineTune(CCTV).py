@@ -1,399 +1,429 @@
-from flask import Flask, render_template, Response, redirect, url_for, request, flash, jsonify
-import cv2
+# IMPORT ALL PACKAGE
+
 import torch
-import numpy as np
-import sqlite3
-import time
-import os
-import threading
-
-# Import YOLO and torch modules
-from ultralytics import YOLO
 import torch.nn as nn
-from torchvision.transforms import Compose, Lambda
-from torchvision.transforms._transforms_video import NormalizeVideo
-from torch.nn.functional import softmax
-from datetime import datetime, timedelta
-from collections import deque
+from torch.utils.data import Dataset, DataLoader
+import torch.optim as optim
+from torchvision.transforms import Compose
+import os
+from ultralytics import YOLO
+
+from pytorchvideo.transforms import (
+    Normalize,
+)
+from torchvision.transforms import Compose
+
+import cv2
+import numpy as np
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
 
 
-app = Flask(__name__)
-# app.secret_key = 'your_secret_key'  # Required for flash messages
+# Set random seed for reproducibility
+torch.manual_seed(42)
+np.random.seed(42)
 
-class MultiPersonVideoClassifier:
-    def __init__(self, video_path):
-        # Initialize model
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = self.load_model()
+
+# Custom Dataset Class
+class CustomActionDataset(Dataset):
+    def __init__(self, video_paths, labels, transform=None, num_frames=4, padding=50):
+        """
+        video_paths: List of paths to video files
+        labels: List of corresponding labels
+        transform: Optional transform to be applied on video
+        num_frames: Number of frames to sample from each video
+        """
+        self.video_paths = video_paths
+        self.labels = labels
+        self.transform = transform
+        self.num_frames = num_frames
+        self.padding = padding 
+
         self.yolo_model = YOLO("yolov8x-worldv2.pt")
-        self.transform = Compose([
-            #Lambda(lambda x: x/255.0),
-            NormalizeVideo([0.45, 0.45, 0.45], [0.225, 0.225, 0.225])
-        ])
+
+    def load_video(self, video_path):
+        frames = []
+        cap = cv2.VideoCapture(video_path)
         
-        # Video handling
-        self.vid = cv2.VideoCapture(video_path)
+        # Get total frames
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)
         
-        # Store frames for each person using deque for efficient frame management
-        self.person_frames = {}  # Track ID -> deque of frames
-        self.person_predictions = {}  # Track ID -> (action, confidence)
-        
-        # Add action duration tracking
-        self.action_timestamps = {}  # Track ID -> {action: (start_time, current_duration)}
-        self.current_actions = {}    # Track ID -> current_action
-        
-        # Class names
-        #self.class_names = ["Walking", "Standing", "Sitting", "Drinking", "Eating"]
-        self.class_names = ["Walking", "Standing", "Sitting", "Drinking", "Using Phone", "Using Laptop", "Talking", "Fall Down"]
-        
-        # Lock for thread-safe operations
-        self.prediction_lock = threading.Lock()
-        
-        # Tracking video processing state
-        self.is_processing = True
-        self.current_frame = None
-
-    def load_model(self):
-        model = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_xs', pretrained=False)
-        in_features = model.blocks[5].proj.in_features
-        model.blocks[5].proj = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(in_features, 8)
-        )
-        map_location = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.load_state_dict(torch.load("best_x3d_model(NewDatasetMMAct9).pth", map_location=map_location))
-
-        model = model.to(self.device)
-        model.eval()
-        return model
-
-    # [Keep all the other methods from the original class: 
-    #  insertOrUpdate, extract_person_roi, make_prediction, 
-    #  update_action_duration, get_video_duration, update_video, draw_person_detection]
-    # (These methods remain exactly the same as in the original implementation)
-
-    def insertOrUpdate(self, track_id, action, duration, start_time):
-        current_time = time.time()
-        # convert_start_time = datetime.utcfromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')
-        # convert_end_time = datetime.utcfromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S')
-        # Start Time
-        utc_time_start = datetime.utcfromtimestamp(start_time)
-        malaysia_time_start = utc_time_start + timedelta(hours=8)
-        convert_start_time = malaysia_time_start.strftime('%H:%M:%S')
-
-        # End Time
-        utc_time_end = datetime.utcfromtimestamp(current_time)
-        malaysia_time_end = utc_time_end + timedelta(hours=8)
-        convert_end_time = malaysia_time_end.strftime('%H:%M:%S')
-
-        # convert_start_time = datetime.utcfromtimestamp(start_time).strftime('%H:%M:%S')
-        # convert_end_time = datetime.utcfromtimestamp(current_time).strftime('%H:%M:%S')
-        round_duration = f"{duration:.2f}"
-        
-        #DB_PATH = os.environ.get('SQLITE_DB_PATH', '/app/database/flaskDB.db')
-
-        #os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-
-        #conn = sqlite3.connect(DB_PATH)
-        conn = sqlite3.connect('action_recognitionDB.db')
-        c = conn.cursor()
-
-        c.execute('''CREATE TABLE IF NOT EXISTS Person(
-                    ID INTEGER PRIMARY KEY,
-                    Name TEXT
-                    )''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS Action(
-                    ActionID INTEGER PRIMARY KEY,
-                    ActionName TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS PersonAction (
-                    PersonID INTEGER,
-                    ActionID INTEGER,
-                    ActionName TEXT,
-                    Duration REAL,
-                    StartTime REAL,
-                  EndTime Real,
-                    FOREIGN KEY (PersonID) REFERENCES Person(ID),
-                    FOREIGN KEY (ActionID) REFERENCES Action(ActionID)
-                    )''')
-        
-        c.execute('SELECT * FROM Person WHERE ID = ?', (track_id,))
-        if c.fetchone() is None:
-            c.execute('INSERT INTO Person (ID, Name) VALUES (?,?)', (track_id, f'Person {track_id}'))
-
-
-
-        # Ensure the action exists in the Action table
-        c.execute('SELECT ActionID FROM Action WHERE ActionName = ?', (action,))
-        action_row = c.fetchone()
-        if action_row is None:
-            c.execute('INSERT INTO Action (ActionName) VALUES (?)', (action,))
-            action_id = c.lastrowid  # Get the newly inserted ActionID
-        else:
-            action_id = action_row[0]  # Use the existing ActionID
-
-        c.execute('SELECT ActionID, Duration FROM PersonAction WHERE PersonID = ? ORDER BY rowid DESC LIMIT 1', (track_id,))
-        last_action_row = c.fetchone()
-
-        if last_action_row and last_action_row[0] == action_id:
-            newDuration = round_duration
-            c.execute('''UPDATE PersonAction 
-                        SET Duration = ?, EndTime = ?
-                        WHERE PersonID = ? AND ActionID = ? AND rowid = (
-                        SELECT MAX(rowid) FROM PersonAction 
-                        WHERE PersonID = ? AND ActionID = ?)''', (newDuration, convert_end_time, track_id, action_id, track_id, action_id))
-            
-        else:
-            # Insert the ActionID and PersonID log into the bridge PersonAction table
-            c.execute('INSERT INTO PersonAction (PersonID, ActionID, ActionName, Duration, StartTime, EndTime) VALUES (?, ?, ?, ?, ?, ?)', 
-                    (track_id, action_id, action, round_duration, convert_start_time, convert_end_time))
-
-        # c.execute('UPDATE PersonAction SET Duration = ? WHERE PersonID = ? AND ActionName = ?', (duration, track_id, action))
-
-        conn.commit()
-        conn.close()
-
-    def update_action_duration(self, track_id, action):
-        """Update action duration tracking"""
-        current_time = time.time()
-        
-        # Initialize tracking for new person
-        if track_id not in self.action_timestamps:
-            self.action_timestamps[track_id] = {}
-            self.current_actions[track_id] = None
-        
-        # If this is a new action for this person
-        if self.current_actions[track_id] != action:
-            # Store start time for new action
-            self.action_timestamps[track_id][action] = (current_time, 0)
-            self.current_actions[track_id] = action
-        else:
-            # Update duration for ongoing action
-            start_time, _ = self.action_timestamps[track_id][action]
-            duration = current_time - start_time
-            self.action_timestamps[track_id][action] = (start_time, duration)
-        
-        return self.action_timestamps[track_id][action][1], self.action_timestamps[track_id][action][0]
-    
-    def extract_person_roi(self, frame, box):
-        """Extract and resize ROI for a person"""
-        x1, y1, x2, y2 = map(int, box)
-        # Add padding while keeping within frame boundaries
-        h, w = frame.shape[:2]
-        pad = 40
-        x1 = max(0, x1 - pad)
-        y1 = max(0, y1 - pad)
-        x2 = min(w, x2 + pad)
-        y2 = min(h, y2 + pad)
-        
-        roi = frame[y1:y2, x1:x2]
-        if roi.size == 0:
-            return None
-            
-        # Resize to model input size while maintaining aspect ratio 480
-        target_height = 182
-        #target_width = int(w * (target_height / h))
-        target_width = 182
-        roi_resized = cv2.resize(roi, (target_width, target_height))
-        return roi_resized
-
-    def make_prediction(self, frames_list):
-        """Make prediction for a sequence of frames"""
-        if len(frames_list) != 4:
-            return None, 0.0
-        
-        # Prepare frames for prediction
-        frames_array = np.array(frames_list).astype(np.float32) / 255.0
-        frames_tensor = torch.from_numpy(frames_array).permute(3, 0, 1, 2)
-        frames_tensor = self.transform(frames_tensor).unsqueeze(0)
-        frames_tensor = frames_tensor.to(self.device)
-        
-        # Make prediction
-        with torch.no_grad():
-            outputs = self.model(frames_tensor)
-            # Top 1 Prediction
-            probabilities = softmax(outputs, dim=1)[0]
-            top_value, top_index = torch.max(probabilities, 0)
-            
-            return self.class_names[top_index], float(top_value)
-        
-    def get_video_duration(self):
-        """Show Duration of the video"""
-        try:
-            fps = self.vid.get(cv2.CAP_PROP_FPS)
-            total_frame = int(self.vid.get(cv2.CAP_PROP_FRAME_COUNT))
-            duration = total_frame/fps
-            return duration, total_frame
-        except Exception as e:
-            raise ValueError(f"Error getting video duration: {e}")
-
-
-    def process_video(self):
-        """Process video frames and store results"""
-        last_time = time.time()
-        frame_count = 0
-
-        duration, total_frame = self.get_video_duration()
-        print(f"Video Duration: {duration:.2f} seconds")
-        print(f"Total Frames: {total_frame} frames")
-        
-        while self.is_processing:
-            ret, frame = self.vid.read()
-            
-            if ret:
-                # Convert frame for display
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame_resized = cv2.resize(frame_rgb, (640, 480))
-                frame_count += 1
-
-                print(f"Frame Now: {frame_count}")
-                
-                # Run YOLO detection
-                results = self.yolo_model.track(frame_resized, persist=True, verbose=False, conf=0.2)
-                annotated_frame = frame_resized.copy()
-                
-                if results[0].boxes.id is not None:
-                    # Filter for person class (class_id = 0)
-                    mask = results[0].boxes.cls == 0
-                    
-                    if mask.any():
-                        boxes = results[0].boxes.xyxy[mask]
-                        track_ids = results[0].boxes.id[mask].cpu().numpy().astype(int)
-                        
-                        # Process each detected person
-                        for box, track_id in zip(boxes, track_ids):
-                            # Initialize frame deque for new tracks
-                            if track_id not in self.person_frames:
-                                self.person_frames[track_id] = deque(maxlen=4)
-                            
-                            # Extract and store ROI
-                            roi = self.extract_person_roi(frame_resized, box)
-                            if roi is not None:
-                                self.person_frames[track_id].append(roi)
-                                
-                                if len(self.person_frames[track_id]) == 4:
-                                    # Make prediction for this person
-                                    frames_list = list(self.person_frames[track_id])
-                                    action, confidence = self.make_prediction(frames_list)
-                                    
-                                    with self.prediction_lock:
-                                        # Update duration for the predicted action
-                                        duration, start_time = self.update_action_duration(track_id, action)
-                                        self.person_predictions[track_id] = (action, confidence, duration, start_time)
-                                    
-                                    self.person_frames[track_id].clear()
-                            
-                            # Draw detection and prediction
-                            self.draw_person_detection(annotated_frame, box, track_id)
-                
-                # Update current frame
-                self.current_frame = annotated_frame
-            else:
-                # End of video
-                self.is_processing = False
+        for frame_idx in range(total_frames):
+            ret, frame = cap.read()
+            if not ret:
                 break
+                
+            if frame_idx in indices:
+                # Convert to RGB (as Faster R-CNN expects RGB input)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_resized = cv2.resize(frame, (640, 640))
 
-    def draw_person_detection(self, frame, box, track_id):
-        """Draw bounding box and prediction for a person"""
-        x1, y1, x2, y2 = map(int, box)
-        
-        with self.prediction_lock:
-            prediction = self.person_predictions.get(track_id)
-        
-        if prediction:
-            action, confidence, duration, start_time = prediction
-            # Color based on confidence (green intensity)
-            color = (0, int(255 * confidence), 0)
-            
-            # Draw box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            
-            # Draw label with background
-            label = f"ID:{track_id} - {action} ({confidence:.2f}) - {duration:.1f} seconds"
-            self.insertOrUpdate(int(track_id), action, duration, start_time)
-            print(label)
-            (label_w, label_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
-            cv2.rectangle(frame, (x1, y1-label_h-10), (x1+label_w, y1), color, -1)
-            cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0), 1)
-        else:
-            # Draw box without prediction
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            label = f"ID:{track_id}"
-            print(label)
-            (label_w, label_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
-            cv2.rectangle(frame, (x1, y1-label_h-10), (x1+label_w, y1), (0, 255, 0), -1)
-            cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0), 1)
+                # Apply person detection (Faster R-CNN) to get bounding boxes
+                boxes, labels, scores = self.detect_person(frame_resized)
+                
+                if boxes:
+                    # Apply padding around the bounding box
+                    x1, y1, x2, y2 = boxes[0]  # Taking the first detected person
+                    x1 = max(0, x1 - self.padding)
+                    y1 = max(0, y1 - self.padding)
+                    x2 = min(frame_rgb.shape[1], x2 + self.padding)
+                    y2 = min(frame_rgb.shape[0], y2 + self.padding)
 
-    def get_frame(self):
-        """Get the current processed frame for streaming"""
-        if self.current_frame is not None:
-            # Convert the frame color back to BGR
-            frame_bgr = cv2.cvtColor(self.current_frame, cv2.COLOR_RGB2BGR)
-            # Convert frame to JPEG
-            ret, jpeg = cv2.imencode('.jpg', frame_bgr)
-            return jpeg.tobytes()
-        return None
-
-def generate_frames(classifier):
-    """Generator function for streaming frames"""
-    # Start video processing in a separate thread
-    processing_thread = threading.Thread(target=classifier.process_video)
-    processing_thread.start()
-
-    while classifier.is_processing:
-        frame = classifier.get_frame()
-        if frame:
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        time.sleep(0.1)  # Control frame rate
-
-@app.route('/')
-def welcome():
-    return render_template('index.html')
-
-@app.route('/model')
-def open():
-    return render_template('index.html')
-
-@app.route('/video1')
-def video():
-    # For webcam
-    classifier = MultiPersonVideoClassifier(0)  # 0 for webcam
-    return Response(generate_frames(classifier), 
-                   mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/videoResult', methods=['POST'])
-def videoR():
-    # Check if the request contains a file
-    if 'video' not in request.files:
-        flash('No file part')
-        return redirect(request.url)
-
-    # Get the uploaded video file
-    video_file = request.files['video']
-
-    # Specify the directory path to save the uploaded video
-    upload_dir = os.path.join(app.instance_path, 'uploaded_videos')
-    if not os.path.exists(upload_dir):
-        os.makedirs(upload_dir)
-
-    # Save the uploaded video to the specified directory
-    video_path = os.path.join(upload_dir, 'temporary.mp4')
-    video_file.save(video_path)
-
-    # Pass the video path to the template
-    return jsonify({'video_path': video_path})
-
-@app.route('/displayVideo1/<video_name>')
-def displayVideo1(video_name):
-    upload_dir = os.path.join(app.instance_path, 'uploaded_videos')
-    video_path = os.path.join(upload_dir, video_name)
+                    # Crop the frame to the adjusted bounding box
+                    frame_rgb = frame_rgb[int(y1):int(y2), int(x1):int(x2)]
+                
+                # Resize the cropped frame
+                frame_rgb = cv2.resize(frame_rgb, (182, 182))  # Resize for model input
+                frames.append(frame_rgb)
+                
+        cap.release()
+        return np.array(frames)
     
-    # Create classifier for the uploaded video
-    classifier = MultiPersonVideoClassifier(video_path)
-    return Response(generate_frames(classifier), 
-                   mimetype='multipart/x-mixed-replace; boundary=frame')
 
-if __name__ == '__main__':
-    app.run(debug=True, threaded=True)
+    def detect_person(self, frame):
+        # Convert frame to tensor
+        image = torch.tensor(frame).float() / 255.0
+        image = image.permute(2, 0, 1).unsqueeze(0)  # Add batch dimension
+
+        # Detect persons in the frame
+        with torch.no_grad():
+            prediction = self.yolo_model(image, verbose=False)
+        
+        # Get boxes with label=1 (person) and confidence score > 0.5
+        boxes = prediction[0].boxes.xyxy.cpu().numpy()
+        scores = prediction[0].boxes.conf.cpu().numpy()
+        labels = prediction[0].boxes.cls.cpu().numpy()
+        
+        # Filter boxes for label=1 (person) and score > 0.5
+        person_boxes = [boxes[i] for i in range(len(labels)) if labels[i] == 0 and scores[i] > 0.5]  # Assuming 0 = 'person
+
+        return person_boxes, labels, scores
+
+
+    def __len__(self):
+        return len(self.video_paths)
+
+    def __getitem__(self, idx):
+        video_path = self.video_paths[idx]
+        label = self.labels[idx]
+        
+        frames = self.load_video(video_path)
+        
+        # Convert to float32 and normalize to [0, 1]
+        frames = frames.astype(np.float32) / 255.0
+        
+        # Convert to tensor [T, H, W, C] -> [C, T, H, W]
+        video = torch.from_numpy(frames).permute(3, 0, 1, 2)
+        
+        if self.transform:
+            video = self.transform(video)
+            
+        return video, label
+
+
+# Function to collect dataset
+def collect_dataset(root_dir):
+    video_paths = []
+    labels = []
+    class_to_idx = {'Walking': 0, 'Standing': 1, 'Sitting': 2, 'Drinking': 3, 'Using Phone': 4, 'Using Laptop': 5, 'Talking': 6, 'Fall Down': 7}
+    
+    for action in class_to_idx.keys():
+        action_dir = os.path.join(root_dir, action)
+        if not os.path.exists(action_dir):
+            continue
+            
+        for video_file in os.listdir(action_dir):
+            if video_file.endswith(('.mp4', '.avi')):
+                video_paths.append(os.path.join(action_dir, video_file))
+                labels.append(class_to_idx[action])
+                
+    return video_paths, labels
+
+
+
+# Modify X3D head
+def modify_x3d_head(model, num_classes=8):
+    """Modify the classification head of X3D model with dropout and freeze/unfreeze layers"""
+    # 1. Freeze all layers first
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    # 4. Unfreeze just the modified head (block 5)
+    for param in model.blocks[4].parameters():
+        param.requires_grad = True
+    for param in model.blocks[5].parameters():
+        param.requires_grad = True
+
+    # 2. Get input features from the last block
+    in_features = model.blocks[5].proj.in_features
+    
+    # 3. Modify the head with new number of classes
+    model.blocks[5].proj = nn.Sequential(
+        nn.Dropout(p=0.5),
+        nn.Linear(in_features, num_classes)
+    )
+        
+    return model
+
+
+# Training function
+def train_epoch(model, train_loader, criterion, optimizer, device):
+    model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+    
+    for videos, labels in tqdm(train_loader, desc='Training'):
+        videos, labels = videos.to(device), labels.to(device)
+        
+        optimizer.zero_grad()
+        outputs = model(videos)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        
+        running_loss += loss.item()
+        _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
+    
+    epoch_loss = running_loss / len(train_loader)
+    epoch_acc = 100. * correct / total
+    return epoch_loss, epoch_acc
+
+
+# Validation function
+def validate(model, val_loader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+    
+    with torch.no_grad():
+        for videos, labels in tqdm(val_loader, desc='Validation'):
+            videos, labels = videos.to(device), labels.to(device)
+            outputs = model(videos)
+            loss = criterion(outputs, labels)
+            
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+    
+    epoch_loss = running_loss / len(val_loader)
+    epoch_acc = 100. * correct / total
+    return epoch_loss, epoch_acc
+
+
+
+# Plot training history
+def plot_training_history(train_losses, val_losses, train_accs, val_accs):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Plot losses
+    ax1.plot(train_losses, label='Train Loss')
+    ax1.plot(val_losses, label='Val Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    
+    # Plot accuracies
+    ax2.plot(train_accs, label='Train Acc')
+    ax2.plot(val_accs, label='Val Acc')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy (%)')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+
+# Evaluation function for confusion matrix and classification report
+def evaluate_model(model, test_loader, device, class_names):
+    """
+    Evaluate the model and generate confusion matrix and classification report
+    
+    Args:
+    - model: Trained PyTorch model
+    - test_loader: DataLoader for test dataset
+    - device: torch device (cuda/cpu)
+    - class_names: List of class names
+    """
+    model.eval()
+    all_preds = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for videos, labels in tqdm(test_loader, desc='Evaluating'):
+            videos, labels = videos.to(device), labels.to(device)
+            outputs = model(videos)
+            _, predicted = outputs.max(1)
+            
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    
+    # Confusion Matrix
+    cm = confusion_matrix(all_labels, all_preds)
+    plt.figure(figsize=(10,8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=class_names, 
+                yticklabels=class_names)
+    plt.title('Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.tight_layout()
+    plt.show()
+    
+    # Classification Report
+    print("\nClassification Report:")
+    print(classification_report(all_labels, all_preds, target_names=class_names))
+
+
+def main():
+    # Configuration
+    DATA_ROOT = "/home/sophic/Video_AI_Project/Dataset/Human Activity Recognition - Video Dataset/" # Update this path
+    BATCH_SIZE = 32
+    NUM_EPOCHS = 20
+    TRAIN_SIZE = 0.7
+    VAL_SIZE = 0.15
+    TEST_SIZE = 0.15
+    
+    # Device configuration
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Model parameters
+    model_name = 'x3d_xs'
+    transform_params = {
+        "side_size": 182,
+        "crop_size": 182,
+        "num_frames": 4,
+    }
+    
+    # Collect dataset
+    video_paths, labels = collect_dataset(DATA_ROOT)
+    
+    # Split dataset
+    train_paths, temp_paths, train_labels, temp_labels = train_test_split(
+        video_paths, labels, train_size=TRAIN_SIZE, stratify=labels, random_state=42
+    )
+    
+    # Further split temp into validation and test
+    val_ratio = VAL_SIZE / (VAL_SIZE + TEST_SIZE)
+    val_paths, test_paths, val_labels, test_labels = train_test_split(
+        temp_paths, temp_labels, train_size=val_ratio, stratify=temp_labels, random_state=42
+    )
+    
+    print(f"Train size: {len(train_paths)}")
+    print(f"Validation size: {len(val_paths)}")
+    print(f"Test size: {len(test_paths)}")
+    
+    # Define transforms
+    train_transform = Compose([
+        Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),
+    ])
+    
+    val_transform = Compose([
+        Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),
+    ])
+    
+    
+    # Create datasets
+    train_dataset = CustomActionDataset(
+        train_paths, train_labels,
+        transform=train_transform,
+        num_frames=transform_params["num_frames"]
+    )
+    
+    val_dataset = CustomActionDataset(
+        val_paths, val_labels,
+        transform=val_transform,
+        num_frames=transform_params["num_frames"]
+    )
+    
+    test_dataset = CustomActionDataset(
+        test_paths, test_labels,
+        transform=val_transform,
+        num_frames=transform_params["num_frames"]
+    )
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    
+    # Load and modify model
+    model = torch.hub.load('facebookresearch/pytorchvideo', model_name, pretrained=True)
+    print(model)
+    model = modify_x3d_head(model, num_classes=8)
+    print("Modify Model")
+    print(model)
+    model = model.to(device)
+    
+    
+    # Define loss and optimizer
+    criterion = nn.CrossEntropyLoss()
+    # criterion = nn.NLLLoss()
+    # optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = optim.AdamW(model.parameters(), lr=0.0002, weight_decay=0.01) 
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, 
+    T_max=NUM_EPOCHS, 
+    eta_min=1e-5
+)
+    
+    # Training history
+    train_losses = []
+    val_losses = []
+    train_accs = []
+    val_accs = []
+    best_val_loss = float('inf')
+    
+    # Training loop
+    for epoch in range(NUM_EPOCHS):
+        print(f'\nEpoch {epoch+1}/{NUM_EPOCHS}')
+        
+        # Train
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        
+        # Validate
+        val_loss, val_acc = validate(model, val_loader, criterion, device)
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
+        
+        # Print metrics
+        print(f'Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%')
+        print(f'Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%')
+        
+        # Learning rate scheduling
+        scheduler.step(val_loss)
+        
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), 'best_x3d_model(NewDatasetMMAct8).pth')
+    
+    # Plot training history
+    plot_training_history(train_losses, val_losses, train_accs, val_accs)
+    
+    # Evaluate on test set
+    test_loss, test_acc = validate(model, test_loader, criterion, device)
+    print(f'\nTest Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%')
+
+    # Define class names to match your class_to_idx in collect_dataset
+    class_names = ['Walking', 'Standing', 'Sitting', 'Drinking', 'Using Phone', 'Using Laptop', 'Talking', 'Fall Down']
+    
+    # Evaluate model with confusion matrix and classification report
+    evaluate_model(model, test_loader, device, class_names)
+
+# Run training
+if __name__ == "__main__":
+    main()
