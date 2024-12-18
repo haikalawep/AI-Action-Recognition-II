@@ -341,7 +341,7 @@ class MultiPersonVideoClassifier:
             cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0), 1)
 
 def main():
-    # Set up argument parser
+    # Set up argument parsers
     parser = argparse.ArgumentParser(description='Multi-Person Action Recognition')
     parser.add_argument('video_path', type=str, help='Path to the input video file')
     
