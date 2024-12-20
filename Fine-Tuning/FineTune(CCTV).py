@@ -1,16 +1,12 @@
 # IMPORT ALL PACKAGE
-
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
-from torchvision.transforms import Compose
 import os
 from ultralytics import YOLO
 
-from pytorchvideo.transforms import (
-    Normalize,
-)
+from pytorchvideo.transforms import Normalize
 from torchvision.transforms import Compose
 
 import cv2
@@ -20,7 +16,6 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
-
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -41,7 +36,6 @@ class CustomActionDataset(Dataset):
         self.transform = transform
         self.num_frames = num_frames
         self.padding = padding 
-
         self.yolo_model = YOLO("yolov8x-worldv2.pt")
 
     def load_video(self, video_path):
@@ -50,7 +44,7 @@ class CustomActionDataset(Dataset):
         
         # Get total frames
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)
+        indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)  # Get number of frame per video [Exp: 100 frames:- 0, 25, 50, 75]
         
         for frame_idx in range(total_frames):
             ret, frame = cap.read()
@@ -152,7 +146,7 @@ def modify_x3d_head(model, num_classes=8):
     for param in model.parameters():
         param.requires_grad = False
     
-    # 4. Unfreeze just the modified head (block 5)
+    # 4. Unfreeze just the modified head (block 4 & 5)
     for param in model.blocks[4].parameters():
         param.requires_grad = True
     for param in model.blocks[5].parameters():
@@ -166,6 +160,7 @@ def modify_x3d_head(model, num_classes=8):
         nn.Dropout(p=0.5),
         nn.Linear(in_features, num_classes)
     )
+    model.blocks[5].activation = None
         
     return model
 

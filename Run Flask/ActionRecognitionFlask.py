@@ -1,49 +1,31 @@
-from flask import Flask, render_template, Response, redirect, url_for, request, flash, jsonify
+from flask import Flask, render_template, Response, redirect, request, flash, jsonify
 import cv2
-import torch
-import numpy as np
-import sqlite3
 import time
 import os
 import threading
-
-# Import YOLO and torch modules
-from ultralytics import YOLO
-import torch.nn as nn
-from torchvision.transforms import Compose, Lambda
-from torchvision.transforms._transforms_video import NormalizeVideo
-from torch.nn.functional import softmax
-from datetime import datetime, timedelta
+from ActionModel import ActionModel
+from ActionDatabase import Database
 from collections import deque
 
-
 app = Flask(__name__)
-# app.secret_key = 'your_secret_key'  # Required for flash messages
 
 class MultiPersonVideoClassifier:
     def __init__(self, video_path):
         # Initialize model
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = self.load_model()
-        self.yolo_model = YOLO("yolov8x-worldv2.pt")
-        self.transform = Compose([
-            Lambda(lambda x: x/255.0),
-            NormalizeVideo([0.45, 0.45, 0.45], [0.225, 0.225, 0.225])
-        ])
-        
         # Video handling
         self.vid = cv2.VideoCapture(video_path)
+        self.action_model = ActionModel()
+        self.db = Database()
         
         # Store frames for each person using deque for efficient frame management
         self.person_frames = {}  # Track ID -> deque of frames
-        self.person_predictions = {}  # Track ID -> (action, confidence)
-        
+        self.person_predictions = {}  # Track ID -> (action, confidence)  
         # Add action duration tracking
         self.action_timestamps = {}  # Track ID -> {action: (start_time, current_duration)}
         self.current_actions = {}    # Track ID -> current_action
         
         # Class names
-        self.class_names = ["Walking", "Standing", "Sitting", "Drinking", "Eating"]
+        self.class_names = ["Walking", "Standing", "Sitting", "Drinking", "Using Phone", "Using Laptop", "Talking", "Fall Down"]
         
         # Lock for thread-safe operations
         self.prediction_lock = threading.Lock()
@@ -52,107 +34,6 @@ class MultiPersonVideoClassifier:
         self.is_processing = True
         self.current_frame = None
 
-    def load_model(self):
-        model = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_xs', pretrained=False)
-        in_features = model.blocks[5].proj.in_features
-        model.blocks[5].proj = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(in_features, 5)
-        )
-        map_location = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.load_state_dict(torch.load("best_x3d_model(newupdate).pth", map_location=map_location))
-        # model.load_state_dict(torch.load("C:/Users/nyok/Desktop/Haikal AI Project/Run Flask/best_x3d_model(newupdate).pth", map_location=map_location))
-
-        model = model.to(self.device)
-        model.eval()
-        return model
-
-    # [Keep all the other methods from the original class: 
-    #  insertOrUpdate, extract_person_roi, make_prediction, 
-    #  update_action_duration, get_video_duration, update_video, draw_person_detection]
-    # (These methods remain exactly the same as in the original implementation)
-
-    def insertOrUpdate(self, track_id, action, duration, start_time):
-        current_time = time.time()
-        # convert_start_time = datetime.utcfromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')
-        # convert_end_time = datetime.utcfromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S')
-        # Start Time
-        utc_time_start = datetime.utcfromtimestamp(start_time)
-        malaysia_time_start = utc_time_start + timedelta(hours=8)
-        convert_start_time = malaysia_time_start.strftime('%H:%M:%S')
-
-        # End Time
-        utc_time_end = datetime.utcfromtimestamp(current_time)
-        malaysia_time_end = utc_time_end + timedelta(hours=8)
-        convert_end_time = malaysia_time_end.strftime('%H:%M:%S')
-
-        # convert_start_time = datetime.utcfromtimestamp(start_time).strftime('%H:%M:%S')
-        # convert_end_time = datetime.utcfromtimestamp(current_time).strftime('%H:%M:%S')
-        round_duration = f"{duration:.2f}"
-        
-        #DB_PATH = os.environ.get('SQLITE_DB_PATH', '/app/database/flaskDB.db')
-
-        #os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-
-        #conn = sqlite3.connect(DB_PATH)
-        conn = sqlite3.connect('action.db')
-        c = conn.cursor()
-
-        c.execute('''CREATE TABLE IF NOT EXISTS Person(
-                    ID INTEGER PRIMARY KEY,
-                    Name TEXT
-                    )''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS Action(
-                    ActionID INTEGER PRIMARY KEY,
-                    ActionName TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS PersonAction (
-                    PersonID INTEGER,
-                    ActionID INTEGER,
-                    ActionName TEXT,
-                    Duration REAL,
-                    StartTime REAL,
-                  EndTime Real,
-                    FOREIGN KEY (PersonID) REFERENCES Person(ID),
-                    FOREIGN KEY (ActionID) REFERENCES Action(ActionID)
-                    )''')
-        
-        c.execute('SELECT * FROM Person WHERE ID = ?', (track_id,))
-        if c.fetchone() is None:
-            c.execute('INSERT INTO Person (ID, Name) VALUES (?,?)', (track_id, f'Person {track_id}'))
-
-
-
-        # Ensure the action exists in the Action table
-        c.execute('SELECT ActionID FROM Action WHERE ActionName = ?', (action,))
-        action_row = c.fetchone()
-        if action_row is None:
-            c.execute('INSERT INTO Action (ActionName) VALUES (?)', (action,))
-            action_id = c.lastrowid  # Get the newly inserted ActionID
-        else:
-            action_id = action_row[0]  # Use the existing ActionID
-
-        c.execute('SELECT ActionID, Duration FROM PersonAction WHERE PersonID = ? ORDER BY rowid DESC LIMIT 1', (track_id,))
-        last_action_row = c.fetchone()
-
-        if last_action_row and last_action_row[0] == action_id:
-            newDuration = round_duration
-            c.execute('''UPDATE PersonAction 
-                        SET Duration = ?, EndTime = ?
-                        WHERE PersonID = ? AND ActionID = ? AND rowid = (
-                        SELECT MAX(rowid) FROM PersonAction 
-                        WHERE PersonID = ? AND ActionID = ?)''', (newDuration, convert_end_time, track_id, action_id, track_id, action_id))
-            
-        else:
-            # Insert the ActionID and PersonID log into the bridge PersonAction table
-            c.execute('INSERT INTO PersonAction (PersonID, ActionID, ActionName, Duration, StartTime, EndTime) VALUES (?, ?, ?, ?, ?, ?)', 
-                    (track_id, action_id, action, round_duration, convert_start_time, convert_end_time))
-
-        # c.execute('UPDATE PersonAction SET Duration = ? WHERE PersonID = ? AND ActionName = ?', (duration, track_id, action))
-
-        conn.commit()
-        conn.close()
 
     def update_action_duration(self, track_id, action):
         """Update action duration tracking"""
@@ -176,48 +57,30 @@ class MultiPersonVideoClassifier:
         
         return self.action_timestamps[track_id][action][1], self.action_timestamps[track_id][action][0]
     
+
     def extract_person_roi(self, frame, box):
-        """Extract and resize ROI for a person"""
-        x1, y1, x2, y2 = map(int, box)
-        # Add padding while keeping within frame boundaries
-        h, w = frame.shape[:2]
-        pad = 100
+        """Extract and resize Region of Interest (ROI) for a person"""
+
+        x1, y1, x2, y2 = map(int, box) # Get Bounding Box Coordinates
+
+        h, w = frame.shape[:2]  # Add padding while keeping within frame boundaries
+        pad = 50
         x1 = max(0, x1 - pad)
         y1 = max(0, y1 - pad)
         x2 = min(w, x2 + pad)
         y2 = min(h, y2 + pad)
         
-        roi = frame[y1:y2, x1:x2]
+        roi = frame[y1:y2, x1:x2] # New ROI after Expanding using Padding
         if roi.size == 0:
             return None
             
-        # Resize to model input size while maintaining aspect ratio 480
+        # Resize to Maintain Aspect Ration 182 for X3D_XS
         target_height = 182
-        #target_width = int(w * (target_height / h))
         target_width = 182
         roi_resized = cv2.resize(roi, (target_width, target_height))
         return roi_resized
+        
 
-    def make_prediction(self, frames_list):
-        """Make prediction for a sequence of frames"""
-        if len(frames_list) != 4:
-            return None, 0.0
-        
-        # Prepare frames for prediction
-        frames_array = np.array(frames_list).astype(np.float32)
-        frames_tensor = torch.from_numpy(frames_array).permute(3, 0, 1, 2)
-        frames_tensor = self.transform(frames_tensor).unsqueeze(0)
-        frames_tensor = frames_tensor.to(self.device)
-        
-        # Make prediction
-        with torch.no_grad():
-            outputs = self.model(frames_tensor)
-            # Top 1 Prediction
-            probabilities = softmax(outputs, dim=1)[0]
-            top_value, top_index = torch.max(probabilities, 0)
-            
-            return self.class_names[top_index], float(top_value)
-        
     def get_video_duration(self):
         """Show Duration of the video"""
         try:
@@ -231,7 +94,6 @@ class MultiPersonVideoClassifier:
 
     def process_video(self):
         """Process video frames and store results"""
-        last_time = time.time()
         frame_count = 0
 
         duration, total_frame = self.get_video_duration()
@@ -250,7 +112,7 @@ class MultiPersonVideoClassifier:
                 print(f"Frame Now: {frame_count}")
                 
                 # Run YOLO detection
-                results = self.yolo_model.track(frame_resized, persist=True, verbose=False, conf=0.2)
+                results = self.action_model.yolo_model.track(frame_resized, persist=True, verbose=False, conf=0.2)
                 annotated_frame = frame_resized.copy()
                 
                 if results[0].boxes.id is not None:
@@ -275,7 +137,7 @@ class MultiPersonVideoClassifier:
                                 if len(self.person_frames[track_id]) == 4:
                                     # Make prediction for this person
                                     frames_list = list(self.person_frames[track_id])
-                                    action, confidence = self.make_prediction(frames_list)
+                                    action, confidence = self.action_model.predict(frames_list)
                                     
                                     with self.prediction_lock:
                                         # Update duration for the predicted action
@@ -294,6 +156,7 @@ class MultiPersonVideoClassifier:
                 self.is_processing = False
                 break
 
+
     def draw_person_detection(self, frame, box, track_id):
         """Draw bounding box and prediction for a person"""
         x1, y1, x2, y2 = map(int, box)
@@ -303,15 +166,15 @@ class MultiPersonVideoClassifier:
         
         if prediction:
             action, confidence, duration, start_time = prediction
-            # Color based on confidence (green intensity)
-            color = (0, int(255 * confidence), 0)
+            
+            color = (0, int(255 * confidence), 0) # Color based on confidence (green intensity)
             
             # Draw box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
             # Draw label with background
             label = f"ID:{track_id} - {action} ({confidence:.2f}) - {duration:.1f} seconds"
-            self.insertOrUpdate(int(track_id), action, duration, start_time)
+            self.db.update_action(int(track_id), action, duration, start_time)
             print(label)
             (label_w, label_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
             cv2.rectangle(frame, (x1, y1-label_h-10), (x1+label_w, y1), color, -1)
@@ -334,6 +197,7 @@ class MultiPersonVideoClassifier:
             ret, jpeg = cv2.imencode('.jpg', frame_bgr)
             return jpeg.tobytes()
         return None
+
 
 def generate_frames(classifier):
     """Generator function for streaming frames"""

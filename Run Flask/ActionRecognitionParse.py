@@ -2,152 +2,35 @@ import argparse
 import tkinter as tk
 import cv2
 import PIL.Image, PIL.ImageTk
-import torch
-import torch.nn as nn
-import numpy as np
-from ultralytics import YOLO
-from torchvision.transforms import Compose, Lambda
-from torchvision.transforms._transforms_video import NormalizeVideo
-from torch.nn.functional import softmax
 import threading
-import time
 from collections import deque
+import time
+from ActionModel import ActionModel
+from ActionDatabase import Database
 
-import sqlite3
-from datetime import datetime, timedelta
-
-class MultiPersonVideoClassifier:
+class VideoProcessor:
     def __init__(self, window, video_path):
         self.window = window
-        self.window.title("Multi-Person Action Recognition")
-        
-        # Initialize model
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = self.load_model()
-        self.yolo_model = YOLO("yolov8x-worldv2.pt")
-        self.transform = Compose([
-            Lambda(lambda x: x/255.0),
-            NormalizeVideo([0.45, 0.45, 0.45], [0.225, 0.225, 0.225])
-        ])
-        
+        self.window.title("AI Human Action Recognition")
         # Create display elements
         self.canvas = tk.Canvas(window, width=640, height=480)
         self.canvas.pack()
-        
-        # FPS display
+        # FPS Display
         self.fps_label = tk.Label(window, text="FPS: Calculating...", font=('Arial', 14), bg='white')
         self.fps_label.pack()
-        
         # Video handling
         self.vid = cv2.VideoCapture(video_path)
+        self.action_model = ActionModel()
+        self.db = Database()
         
-        # Store frames for each person using deque for efficient frame managements
-        self.person_frames = {}  # Track ID -> deque of frames
-        self.person_predictions = {}  # Track ID -> (action, confidence)
-        
-        # Add action duration tracking
-        self.action_timestamps = {}  # Track ID -> {action: (start_time, current_duration)}
-        self.current_actions = {}    # Track ID -> current_action
-        
-        # Class names
-        self.class_names = ["Walking", "Standing", "Sitting", "Drinking", "Using Phone", "Using Laptop", "Talking", "Fall Down"]
-        
+        self.person_frames = {}         # Track ID -> deque of frames
+        self.person_predictions = {}    # Track ID -> (action, confidence)
+        self.action_timestamps = {}     # Track ID -> {action: (start_time, current_duration)}
+        self.current_actions = {}       # Track ID -> current_action
         # Lock for thread-safe operations
         self.prediction_lock = threading.Lock()
-        
-        # Start video processing
-        threading.Thread(target=self.update_video, daemon=True).start()
-    
-    def insertOrUpdate(self, track_id, action, duration, start_time):
-        current_time = time.time()
-        # convert_start_time = datetime.utcfromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')
-        # convert_end_time = datetime.utcfromtimestamp(current_time).strftime('%Y-%m-%d %H:%M:%S')
-        # Start Time
-        utc_time_start = datetime.utcfromtimestamp(start_time)
-        malaysia_time_start = utc_time_start + timedelta(hours=8)
-        convert_start_time = malaysia_time_start.strftime('%H:%M:%S')
+        threading.Thread(target=self.process_video, daemon=True).start()    # Start video processing
 
-        # End Time
-        utc_time_end = datetime.utcfromtimestamp(current_time)
-        malaysia_time_end = utc_time_end + timedelta(hours=8)
-        convert_end_time = malaysia_time_end.strftime('%H:%M:%S')
-
-        # convert_start_time = datetime.utcfromtimestamp(start_time).strftime('%H:%M:%S')
-        # convert_end_time = datetime.utcfromtimestamp(current_time).strftime('%H:%M:%S')
-        round_duration = f"{duration:.2f}"
-
-        conn = sqlite3.connect('action-recognitionDB.db')
-        c = conn.cursor()
-
-        c.execute('''CREATE TABLE IF NOT EXISTS Person(
-                    ID INTEGER PRIMARY KEY,
-                    Name TEXT
-                    )''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS Action(
-                    ActionID INTEGER PRIMARY KEY,
-                    ActionName TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS PersonAction (
-                    PersonID INTEGER,
-                    ActionID INTEGER,
-                    ActionName TEXT,
-                    Duration REAL,
-                    StartTime REAL,
-                  EndTime Real,
-                    FOREIGN KEY (PersonID) REFERENCES Person(ID),
-                    FOREIGN KEY (ActionID) REFERENCES Action(ActionID)
-                    )''')
-        
-        c.execute('SELECT * FROM Person WHERE ID = ?', (track_id,))
-        if c.fetchone() is None:
-            c.execute('INSERT INTO Person (ID, Name) VALUES (?,?)', (track_id, f'Person {track_id}'))
-
-
-
-        # Ensure the action exists in the Action table
-        c.execute('SELECT ActionID FROM Action WHERE ActionName = ?', (action,))
-        action_row = c.fetchone()
-        if action_row is None:
-            c.execute('INSERT INTO Action (ActionName) VALUES (?)', (action,))
-            action_id = c.lastrowid  # Get the newly inserted ActionID
-        else:
-            action_id = action_row[0]  # Use the existing ActionID
-
-        c.execute('SELECT ActionID, Duration FROM PersonAction WHERE PersonID = ? ORDER BY rowid DESC LIMIT 1', (track_id,))
-        last_action_row = c.fetchone()
-
-        if last_action_row and last_action_row[0] == action_id:
-            newDuration = round_duration
-            c.execute('''UPDATE PersonAction 
-                        SET Duration = ?, EndTime = ?
-                        WHERE PersonID = ? AND ActionID = ? AND rowid = (
-                        SELECT MAX(rowid) FROM PersonAction 
-                        WHERE PersonID = ? AND ActionID = ?)''', (newDuration, convert_end_time, track_id, action_id, track_id, action_id))
-            
-        else:
-            # Insert the ActionID and PersonID log into the bridge PersonAction table
-            c.execute('INSERT INTO PersonAction (PersonID, ActionID, ActionName, Duration, StartTime, EndTime) VALUES (?, ?, ?, ?, ?, ?)', 
-                    (track_id, action_id, action, round_duration, convert_start_time, convert_end_time))
-
-        # c.execute('UPDATE PersonAction SET Duration = ? WHERE PersonID = ? AND ActionName = ?', (duration, track_id, action))
-
-        conn.commit()
-        conn.close()
-
-
-    def load_model(self):
-        model = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_xs', pretrained=False)
-        in_features = model.blocks[5].proj.in_features
-        model.blocks[5].proj = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(in_features, 8)
-        )
-        map_location = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.load_state_dict(torch.load("best_x3d_model(NewDatasetMMAct9).pth", map_location=map_location))
-        model = model.to(self.device)
-        model.eval()
-        return model
     
     def update_action_duration(self, track_id, action):
         """Update action duration tracking"""
@@ -192,27 +75,7 @@ class MultiPersonVideoClassifier:
         target_width = 182
         roi_resized = cv2.resize(roi, (target_width, target_height))
         return roi_resized
-
-    def make_prediction(self, frames_list):
-        """Make prediction for a sequence of frames"""
-        if len(frames_list) != 4:
-            return None, 0.0
-        
-        # Prepare frames for prediction
-        frames_array = np.array(frames_list).astype(np.float32)
-        frames_tensor = torch.from_numpy(frames_array).permute(3, 0, 1, 2)
-        frames_tensor = self.transform(frames_tensor).unsqueeze(0)
-        frames_tensor = frames_tensor.to(self.device)
-        
-        # Make prediction
-        with torch.no_grad():
-            outputs = self.model(frames_tensor)
-            # Top 1 Prediction
-            probabilities = softmax(outputs, dim=1)[0]
-            top_value, top_index = torch.max(probabilities, 0)
-            
-            return self.class_names[top_index], float(top_value)
-        
+    
     def get_video_duration(self):
         """Show Duration of the video"""
         try:
@@ -224,7 +87,7 @@ class MultiPersonVideoClassifier:
             raise ValueError(f"Error getting video duration: {e}")
 
     
-    def update_video(self):
+    def process_video(self):
         last_time = time.time()
         frame_count = 0
 
@@ -246,8 +109,8 @@ class MultiPersonVideoClassifier:
                 
                 print(f"\nFrame Now: {frame_count}")
                 # Run YOLO detection
-                results = self.yolo_model.track(frame_resized, persist=True, verbose=False, conf=0.2)
-                print(self.yolo_model.device)
+                results = self.action_model.yolo_model.track(frame_resized, persist=True, verbose=False, conf=0.2)
+                print(self.action_model.device)
                 annotated_frame = frame_resized.copy()
                 
                 if results[0].boxes.id is not None:
@@ -273,7 +136,7 @@ class MultiPersonVideoClassifier:
                                 if len(self.person_frames[track_id]) == 4:
                                     # Make prediction for this person
                                     frames_list = list(self.person_frames[track_id])
-                                    action, confidence = self.make_prediction(frames_list)
+                                    action, confidence = self.action_model.predict(frames_list)
                                     
                                     with self.prediction_lock:
                                         self.person_predictions[track_id] = (action, confidence)
@@ -320,14 +183,12 @@ class MultiPersonVideoClassifier:
             action, confidence, duration, start_time = prediction
             # Color based on confidence (green intensity)
             color = (0, int(255 * confidence), 0)
-            
-            # Draw box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            
-            # Draw label with background
-            label = f"ID:{track_id} - {action} ({confidence:.2f}) - {duration:.1f} seconds"
-            self.insertOrUpdate(int(track_id), action, duration, start_time)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)  # Draw box
+            label = f"ID:{track_id} - {action} ({confidence:.2f}) - {duration:.1f} seconds" # Draw label with background
+
+            self.db.update_action(int(track_id), action, duration, start_time)  # Update detail into DB
             print(label)
+
             (label_w, label_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
             cv2.rectangle(frame, (x1, y1-label_h-10), (x1+label_w, y1), color, -1)
             cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0), 1)
@@ -341,30 +202,20 @@ class MultiPersonVideoClassifier:
             cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 0), 1)
 
 def main():
-    # Set up argument parsers
     parser = argparse.ArgumentParser(description='Multi-Person Action Recognition')
     parser.add_argument('video_path', type=str, help='Path to the input video file')
-    
-    # Parse arguments
     args = parser.parse_args()
     
-    # Validate video path
     try:
-        # Check if file exists
-        with open(args.video_path, 'r') as f:
+        with open(args.video_path, 'r'):
             pass
     except IOError:
         print(f"Error: Video file '{args.video_path}' does not exist or is not readable.")
         return
     
-    # Create Tkinter root window
     root = tk.Tk()
     root.configure(bg='white')
-    
-    # Initialize the app with the video path
-    app = MultiPersonVideoClassifier(root, args.video_path)
-    
-    # Start the Tkinter event loop
+    VideoProcessor(root, args.video_path)
     root.mainloop()
 
 if __name__ == "__main__":
