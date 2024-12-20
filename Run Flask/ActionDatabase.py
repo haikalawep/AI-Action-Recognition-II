@@ -3,10 +3,11 @@ from datetime import datetime, timedelta
 import time
 
 class Database:
-    def __init__(self, db_name='action-recognitionDB.db'):
+    def __init__(self, db_name='action-recognitionDB.db'):  # Database Name
         self.db_name = db_name
         self._init_tables()
     
+    # Create Table for Database
     def _init_tables(self):
         with sqlite3.connect(self.db_name) as conn:
             c = conn.cursor()

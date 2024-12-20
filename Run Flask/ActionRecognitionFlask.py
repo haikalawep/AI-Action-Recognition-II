@@ -74,7 +74,7 @@ class MultiPersonVideoClassifier:
         if roi.size == 0:
             return None
             
-        # Resize to Maintain Aspect Ration 182 for X3D_XS
+        # Resize to Maintain Aspect Ratio 182 for X3D_XS
         target_height = 182
         target_width = 182
         roi_resized = cv2.resize(roi, (target_width, target_height))

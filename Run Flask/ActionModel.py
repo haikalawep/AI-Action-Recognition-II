@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch.nn.functional import softmax
 import numpy as np
 
+# Load the modified model, recognize the action
 class ActionModel:
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -19,14 +20,14 @@ class ActionModel:
                            "Using Phone", "Using Laptop", "Talking", "Fall Down"]
     
     def _load_model(self):
-        model = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_xs', pretrained=False)
+        model = torch.hub.load('facebookresearch/pytorchvideo', 'x3d_xs', pretrained=False) # Load the X3D_XS Model
         in_features = model.blocks[5].proj.in_features
         model.blocks[5].proj = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(in_features, 8)
+            nn.Dropout(p=0.5),          # Adding Drop Out
+            nn.Linear(in_features, 8)   # Replace in_features from 400 to 8
         )
         model.load_state_dict(torch.load("best_x3d_model(NewDatasetMMAct9).pth", 
-                                       map_location=self.device))
+                                       map_location=self.device))   # Load the weight of our trained Model
         return model.to(self.device).eval()
     
     # Make prediction for a each 4 frames
@@ -41,5 +42,5 @@ class ActionModel:
         with torch.no_grad():       
             outputs = self.model(frames_tensor)
             probabilities = softmax(outputs, dim=1)[0]       # Top 1 Prediction
-            confidence, idx = torch.max(probabilities, 0)
+            confidence, idx = torch.max(probabilities, 0)    # Get confidence score and its action index
             return self.class_names[idx], float(confidence)

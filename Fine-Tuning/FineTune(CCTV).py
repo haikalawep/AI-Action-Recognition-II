@@ -77,7 +77,7 @@ class CustomActionDataset(Dataset):
         cap.release()
         return np.array(frames)
     
-
+    # Detect a person to get bounding box for feeding to action recognition model
     def detect_person(self, frame):
         # Convert frame to tensor
         image = torch.tensor(frame).float() / 255.0
@@ -104,7 +104,7 @@ class CustomActionDataset(Dataset):
     def __getitem__(self, idx):
         video_path = self.video_paths[idx]
         label = self.labels[idx]
-        
+        # Get the frames that already cropped with expanded bounding box
         frames = self.load_video(video_path)
         
         # Convert to float32 and normalize to [0, 1]
@@ -139,7 +139,6 @@ def collect_dataset(root_dir):
     return video_paths, labels
 
 
-
 # Modify X3D head
 def modify_x3d_head(model, num_classes=8):
     """Modify the classification head of X3D model with dropout and freeze/unfreeze layers"""
@@ -161,7 +160,7 @@ def modify_x3d_head(model, num_classes=8):
         nn.Dropout(p=0.5),
         nn.Linear(in_features, num_classes)
     )
-    model.blocks[5].activation = None
+    #model.blocks[5].activation = None
         
     return model
 
@@ -402,7 +401,7 @@ def main():
         # Learning rate scheduling
         scheduler.step(val_loss)
         
-        # Save best model
+        # Save the trained model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), 'best_x3d_model(NewDatasetMMAct8).pth')
