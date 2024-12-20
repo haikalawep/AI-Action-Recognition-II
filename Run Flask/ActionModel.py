@@ -29,6 +29,7 @@ class ActionModel:
                                        map_location=self.device))
         return model.to(self.device).eval()
     
+    # Make prediction for a each 4 frames
     def predict(self, frames):
         if len(frames) != 4:
             return None, 0.0
@@ -37,8 +38,8 @@ class ActionModel:
         frames_tensor = frames_tensor.permute(3, 0, 1, 2)
         frames_tensor = self.transform(frames_tensor).unsqueeze(0).to(self.device)
         
-        with torch.no_grad():
+        with torch.no_grad():       
             outputs = self.model(frames_tensor)
-            probs = softmax(outputs, dim=1)[0]
-            conf, idx = torch.max(probs, 0)
-            return self.class_names[idx], float(conf)
+            probabilities = softmax(outputs, dim=1)[0]       # Top 1 Prediction
+            confidence, idx = torch.max(probabilities, 0)
+            return self.class_names[idx], float(confidence)

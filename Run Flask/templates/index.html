@@ -205,7 +205,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script>
-
+        // Start Action Button Function
         function startTech(exerciseNumber) {
             document.getElementById('labelUpload').classList.add('hidden');
             document.getElementById('inputUpload').classList.add('hidden');
@@ -222,7 +222,7 @@
             // Show additional buttons for real-time and upload options
             document.getElementById('additionalButtons').style.display = 'block';
         }
-
+        // Real Time Button Function
         function startRealTime() {
             document.getElementById('labelUpload').classList.add('hidden');
             document.getElementById('inputUpload').classList.add('hidden');
@@ -240,7 +240,7 @@
             // Add code to start real-time video feed (using webcam)
             alert('Starting real-time feed');
         }
-
+        // Select Video from Folder
         function Upload() {
             document.getElementById('video').src = ``;
             document.getElementById('video').style.display = 'none';
@@ -251,7 +251,7 @@
             const form = document.getElementById('uploadForm');
             form.action = ``;
         }
-
+        // Submit Button Function
         function startHandleUpload() {
             document.getElementById('labelUpload').classList.add('hidden');
             document.getElementById('inputUpload').classList.add('hidden');

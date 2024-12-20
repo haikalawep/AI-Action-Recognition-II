@@ -212,6 +212,8 @@ def generate_frames(classifier):
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
         time.sleep(0.1)  # Control frame rate
 
+"""------------------------------------Flask--------------------------------------------"""
+
 @app.route('/')
 def welcome():
     return render_template('index.html')

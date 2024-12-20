@@ -52,11 +52,11 @@ class CustomActionDataset(Dataset):
                 break
                 
             if frame_idx in indices:
-                # Convert to RGB (as Faster R-CNN expects RGB input)
+                # Convert to RGB
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_resized = cv2.resize(frame, (640, 640))
 
-                # Apply person detection (Faster R-CNN) to get bounding boxes
+                # Apply person detection
                 boxes, labels, scores = self.detect_person(frame_resized)
                 
                 if boxes:
@@ -123,10 +123,11 @@ class CustomActionDataset(Dataset):
 def collect_dataset(root_dir):
     video_paths = []
     labels = []
-    class_to_idx = {'Walking': 0, 'Standing': 1, 'Sitting': 2, 'Drinking': 3, 'Using Phone': 4, 'Using Laptop': 5, 'Talking': 6, 'Fall Down': 7}
+    class_to_idx = {'Walking': 0, 'Standing': 1, 'Sitting': 2, 'Drinking': 3, 'Using Phone': 4, 'Using Laptop': 5, 'Talking': 6, 'Fall Down': 7}    # Set Label Action with Index
     
     for action in class_to_idx.keys():
         action_dir = os.path.join(root_dir, action)
+        # Skip the next action if directory not exist
         if not os.path.exists(action_dir):
             continue
             
