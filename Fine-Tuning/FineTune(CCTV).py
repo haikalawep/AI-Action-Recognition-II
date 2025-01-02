@@ -60,7 +60,7 @@ class CustomActionDataset(Dataset):
                 boxes, labels, scores = self.detect_person(frame_resized)
                 
                 if boxes:
-                    # Apply padding around the bounding box
+                    # Apply padding around the bounding box with padding=50
                     x1, y1, x2, y2 = boxes[0]  # Taking the first detected person
                     x1 = max(0, x1 - self.padding)
                     y1 = max(0, y1 - self.padding)
@@ -327,7 +327,6 @@ def main():
     val_transform = Compose([
         Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),
     ])
-    
     
     # Create datasets
     train_dataset = CustomActionDataset(
