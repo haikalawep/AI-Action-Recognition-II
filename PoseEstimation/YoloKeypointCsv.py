@@ -5,15 +5,36 @@ import pandas as pd
 from tqdm import tqdm
 import cv2
 
+# Define keypoint labels
+KEYPOINT_LABELS = {
+    0: 'NOSE',
+    1: 'LEFT_EYE',
+    2: 'RIGHT_EYE',
+    3: 'LEFT_EAR',
+    4: 'RIGHT_EAR',
+    5: 'LEFT_SHOULDER',
+    6: 'RIGHT_SHOULDER',
+    7: 'LEFT_ELBOW',
+    8: 'RIGHT_ELBOW',
+    9: 'LEFT_WRIST',
+    10: 'RIGHT_WRIST',
+    11: 'LEFT_HIP',
+    12: 'RIGHT_HIP',
+    13: 'LEFT_KNEE',
+    14: 'RIGHT_KNEE',
+    15: 'LEFT_ANKLE',
+    16: 'RIGHT_ANKLE'
+}
+
 def get_frame_indices(total_frames, num_samples=16):
     """
-    Calculate indices for equally spaced frames
+    Calculate indices for equally spaced frames | Example: 64 frames ---> 1,4,8,12,16...,64
     """
     return np.linspace(0, total_frames - 1, num_samples, dtype=int)
 
 def extract_keypoints(video_path, model, num_frames=16):
     """
-    Extract keypoints from exactly 32 equally spaced frames in a video
+    Extract keypoints from exactly 16 equally spaced frames in a video
     """
     # Open video file
     cap = cv2.VideoCapture(video_path)
@@ -47,7 +68,7 @@ def extract_keypoints(video_path, model, num_frames=16):
                 print("Not detect")
                 keypoints_list.append(np.zeros(34))
                 break
-
+                
             # Clean up temporary file
             os.remove(temp_frame_path)
             
@@ -55,7 +76,7 @@ def extract_keypoints(video_path, model, num_frames=16):
         
     cap.release()
     
-    # Ensure we have exactly 32 frames
+    # Ensure we have exactly num_frames frames
     if len(keypoints_list) < num_frames:
         # Pad with zeros if we couldn't get enough frames
         padding = num_frames - len(keypoints_list)
@@ -81,7 +102,7 @@ def process_videos(base_dir, model, action):
         video_path = os.path.join(action_dir, video_file)
         
         try:
-            # Extract 32 frames of keypoints
+            # Extract frames of keypoints
             keypoints_frames = extract_keypoints(video_path, model)
             
             # Create rows for each frame
@@ -91,9 +112,14 @@ def process_videos(base_dir, model, action):
                     'frame_number': frame_idx,
                     'action': action
                 }
-                # Add keypoint coordinates
-                for i, coord in enumerate(keypoints):
-                    row[f'kp_{i}'] = coord
+                # Add keypoint coordinates with proper labels
+                for i in range(len(KEYPOINT_LABELS)):
+                    # Each keypoint has x and y coordinates
+                    x_idx = i * 2
+                    y_idx = i * 2 + 1
+                    joint_name = KEYPOINT_LABELS[i]
+                    row[f'{joint_name}_x'] = keypoints[x_idx]
+                    row[f'{joint_name}_y'] = keypoints[y_idx]
                 
                 data.append(row)
                 
@@ -107,10 +133,10 @@ def main():
     model = YOLO('yolov8m-pose.pt')
     
     # Set base directory containing action folders
-    base_dir = "/home/sophic/Video_AI_Project/Dataset/Human Activity Recognition - Video Dataset/" # Replace with your actual path
+    base_dir = "/home/sophic/Video_AI_Project/Dataset/Human Activity Recognition - Video Dataset/"
     
-    # Process each action separately
-    action_classes = ['Standing']
+    # Process each action separately | Can add more action
+    action_classes = ['Walking', 'Standing', 'Sitting']
     
     for action in action_classes:
         # Process videos for this action
@@ -118,7 +144,7 @@ def main():
         
         if df is not None:
             # Save to CSV with action name
-            output_file = f"{action.lower()}test.csv"
+            output_file = f"{action.lower()}.csv"
             df.to_csv(output_file, index=False)
             print(f"Dataset for {action} saved to {output_file}")
             print(f"Total frames: {len(df)}")
