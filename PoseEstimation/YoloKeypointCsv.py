@@ -143,7 +143,7 @@ def main():
         df = process_videos(base_dir, model, action)
         
         if df is not None:
-            # Save to CSV with action name
+            # Save to CSV with actions name
             output_file = f"{action.lower()}.csv"
             df.to_csv(output_file, index=False)
             print(f"Dataset for {action} saved to {output_file}")
