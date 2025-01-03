@@ -1,4 +1,5 @@
 # IMPORT ALL PACKAGE
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -16,6 +17,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
+
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -36,6 +38,7 @@ class CustomActionDataset(Dataset):
         self.transform = transform
         self.num_frames = num_frames
         self.padding = padding 
+
         self.yolo_model = YOLO("yolov8x-worldv2.pt")
 
     def load_video(self, video_path):
@@ -44,7 +47,7 @@ class CustomActionDataset(Dataset):
         
         # Get total frames
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)  # Get number of frame per video [Exp: 100 frames:- 0, 25, 50, 75]
+        indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)
         
         for frame_idx in range(total_frames):
             ret, frame = cap.read()
@@ -52,15 +55,15 @@ class CustomActionDataset(Dataset):
                 break
                 
             if frame_idx in indices:
-                # Convert to RGB
+                # Convert to RGB (as Faster R-CNN expects RGB input)
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_resized = cv2.resize(frame, (640, 640))
 
-                # Apply person detection
+                # Apply person detection (Faster R-CNN) to get bounding boxes
                 boxes, labels, scores = self.detect_person(frame_resized)
                 
                 if boxes:
-                    # Apply padding around the bounding box with padding=50
+                    # Apply padding around the bounding box
                     x1, y1, x2, y2 = boxes[0]  # Taking the first detected person
                     x1 = max(0, x1 - self.padding)
                     y1 = max(0, y1 - self.padding)
@@ -77,7 +80,7 @@ class CustomActionDataset(Dataset):
         cap.release()
         return np.array(frames)
     
-    # Detect a person to get bounding box for feeding to action recognition model
+
     def detect_person(self, frame):
         # Convert frame to tensor
         image = torch.tensor(frame).float() / 255.0
@@ -104,7 +107,7 @@ class CustomActionDataset(Dataset):
     def __getitem__(self, idx):
         video_path = self.video_paths[idx]
         label = self.labels[idx]
-        # Get the frames that already cropped with expanded bounding box
+        
         frames = self.load_video(video_path)
         
         # Convert to float32 and normalize to [0, 1]
@@ -123,11 +126,10 @@ class CustomActionDataset(Dataset):
 def collect_dataset(root_dir):
     video_paths = []
     labels = []
-    class_to_idx = {'Walking': 0, 'Standing': 1, 'Sitting': 2, 'Drinking': 3, 'Using Phone': 4, 'Using Laptop': 5, 'Talking': 6, 'Fall Down': 7}    # Set Label Action with Index
+    class_to_idx = {'Walking': 0, 'Standing': 1, 'Sitting': 2, 'Drinking': 3, 'Using Phone': 4, 'Using Laptop': 5, 'Talking': 6, 'Fall Down': 7}
     
     for action in class_to_idx.keys():
         action_dir = os.path.join(root_dir, action)
-        # Skip the next action if directory not exist
         if not os.path.exists(action_dir):
             continue
             
@@ -137,6 +139,7 @@ def collect_dataset(root_dir):
                 labels.append(class_to_idx[action])
                 
     return video_paths, labels
+
 
 
 # Modify X3D head
@@ -160,7 +163,7 @@ def modify_x3d_head(model, num_classes=8):
         nn.Dropout(p=0.5),
         nn.Linear(in_features, num_classes)
     )
-    #model.blocks[5].activation = None
+    model.blocks[5].activation = None
         
     return model
 
@@ -328,6 +331,7 @@ def main():
         Normalize([0.45, 0.45, 0.45], [0.225, 0.225, 0.225]),
     ])
     
+    
     # Create datasets
     train_dataset = CustomActionDataset(
         train_paths, train_labels,
@@ -400,10 +404,10 @@ def main():
         # Learning rate scheduling
         scheduler.step(val_loss)
         
-        # Save the trained model
+        # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), 'best_x3d_model(NewDatasetMMAct8).pth')
+            torch.save(model.state_dict(), 'best_x3d_model(NewDatasetMMAct10).pth')
     
     # Plot training history
     plot_training_history(train_losses, val_losses, train_accs, val_accs)
