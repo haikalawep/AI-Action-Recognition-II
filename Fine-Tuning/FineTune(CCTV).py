@@ -6,7 +6,6 @@ from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
 import os
 from ultralytics import YOLO
-
 from pytorchvideo.transforms import Normalize
 from torchvision.transforms import Compose
 
@@ -18,11 +17,9 @@ from sklearn.model_selection import train_test_split
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
 
-
 # Set random seed for reproducibility
 torch.manual_seed(42)
 np.random.seed(42)
-
 
 # Custom Dataset Class
 class CustomActionDataset(Dataset):
